@@ -1,5 +1,4 @@
-﻿using NUnit.Framework;
-using UnityEngine;
+﻿using UnityEngine;
 using Valve.VR;
 using Valve.VR.InteractionSystem;
 
@@ -7,18 +6,23 @@ namespace Scenes.SampleScene {
     [DisallowMultipleComponent]
     public class LaserPointer : MonoBehaviour {
         public Color color;
+        public VrItemsMenu vrItemsMenu;
 
         public SteamVR_Behaviour_Pose pose;
         public SteamVR_Action_Boolean interactWithUI = SteamVR_Input.GetBooleanAction("InteractUI");
-        public SteamVR_Action_Vector2 rightJoystickPosition = SteamVR_Input.GetVector2Action("RightJoystickPosition");
+        public SteamVR_Action_Boolean rightJoystickNorth = SteamVR_Input.GetBooleanAction("RightJoystickNorth");
+        public SteamVR_Action_Boolean rightJoystickSouth = SteamVR_Input.GetBooleanAction("RightJoystickSouth");
+        public SteamVR_Action_Boolean invokeMenu = SteamVR_Input.GetBooleanAction("InvokeMenu");
 
         private Ray ray;
         private bool isActive;
         private GameObject holder;
         private GameObject pointer;
+        private bool activatedMenuInLastFrame;
         private MeshRenderer pointerMeshRenderer;
         private readonly Color clickColor = Color.green;
-        private CustomInteractable currentInteractable;
+        private CustomInteractable currentlyHovered;
+        private CustomInteractable currentlyHolding;
 
         private const float Dist = 100f;
         private const float Thickness = 0.002f;
@@ -30,6 +34,10 @@ namespace Scenes.SampleScene {
                 Debug.LogError("No SteamVR_Behaviour_Pose component found on this object", this);
             if (interactWithUI == null)
                 Debug.LogError("No ui interaction action has been set on this component.", this);
+            if (rightJoystickNorth == null)
+                Debug.LogError("No right joystick north action has been set on this component.", this);
+            if (rightJoystickSouth == null)
+                Debug.LogError("No right joystick south action has been set on this component.", this);
 
             holder = new GameObject() {
                 transform = {
@@ -72,13 +80,35 @@ namespace Scenes.SampleScene {
                 transform.GetChild(0).gameObject.SetActive(true);
             }
 
+            if (vrItemsMenu.active)
+                return;
+
+            if (invokeMenu.GetState(pose.inputSource)) {
+                pointer.SetActive(false);
+                activatedMenuInLastFrame = true;
+                return;
+            } else if (activatedMenuInLastFrame) {
+                pointer.SetActive(true);
+                activatedMenuInLastFrame = false;
+            }
+
             UpdateRayPositionAndOrigin();
 
             var didRayHit = Physics.Raycast(ray, out var rayHit);
-            HandlePossibleEndOfObjectInteraction(didRayHit, rayHit);
+            HandlePossibleEndOfCustomInteractableHold();
+            HandlePossibleEndOfObjectHover(didRayHit, rayHit);
+
             UpdatePointerPositionAndScale(didRayHit, rayHit);
-            HandlePossibleEndOfRayClick();
-            HandlePossibleObjectInteraction(didRayHit, rayHit);
+
+            HandlePossibleObjectHover(didRayHit, rayHit);
+            HandlePossibleHoveredCustomInteractableHold();
+
+            HandlePossibleHeldCustomInteractableMove();
+        }
+
+        private void HandlePossibleHeldCustomInteractableMove() {
+            if (currentlyHolding)
+                HandleMoveHeldCustomInteractableForwardsOrBackwardsOnUserInput();
         }
 
         private void UpdateRayPositionAndOrigin() {
@@ -87,7 +117,7 @@ namespace Scenes.SampleScene {
         }
 
         private void UpdatePointerPositionAndScale(bool didRayHit, RaycastHit raycastHit) {
-            if (currentInteractable != null)
+            if (currentlyHolding != null)
                 return;
 
             var rayDistance = Dist;
@@ -96,7 +126,7 @@ namespace Scenes.SampleScene {
                 rayDistance = raycastHit.distance;
             }
 
-            if (interactWithUI != null && interactWithUI.GetState(pose.inputSource)) {
+            if (interactWithUI.GetState(pose.inputSource)) {
                 pointer.transform.localScale = new Vector3(Thickness * 5f, Thickness * 5f, rayDistance);
                 pointerMeshRenderer.material.color = clickColor;
             } else {
@@ -107,13 +137,34 @@ namespace Scenes.SampleScene {
             pointer.transform.localPosition = new Vector3(0f, 0f, rayDistance / 2f);
         }
 
-        private void HandlePossibleEndOfRayClick() {
-            if (currentInteractable != null && interactWithUI != null && !interactWithUI.GetState(pose.inputSource)) {
-                currentInteractable.OnRayEndClick();
+        private void HandlePossibleEndOfCustomInteractableHold() {
+            if (currentlyHolding != null && !interactWithUI.GetState(pose.inputSource)) {
+                currentlyHolding.OnRayEndClick();
+
+                // TODO: moving the object using the joint seems to break it for some reason,
+                // for now a naive fix is to just re-instantiate the object while we finish moving it
+
+                var copy = Instantiate(currentlyHolding.originalPrefab);
+                var itemColliders = copy.GetComponents<Collider>();
+                if (itemColliders != null && itemColliders.Length > 0) {
+                    foreach (var itemCollider in itemColliders) {
+                        Destroy(itemCollider);
+                    }
+                }
+                copy.transform.position = currentlyHolding.transform.position;
+                var customInteractable = copy.AddComponent<CustomInteractable>();
+                customInteractable.originalPrefab = currentlyHolding.originalPrefab;
+                copy.AddComponent<MeshCollider>();
+                
+                currentlyHolding.gameObject.SetActive(false);
+                Destroy(currentlyHolding);
+                currentlyHolding = null;
+                copy.SetActive(true);
+                //end naive fix
             }
         }
 
-        private void HandlePossibleObjectInteraction(bool isHit, RaycastHit raycastHit) {
+        private void HandlePossibleObjectHover(bool isHit, RaycastHit raycastHit) {
             if (!isHit)
                 return;
 
@@ -122,35 +173,37 @@ namespace Scenes.SampleScene {
                 return;
 
             // we're already touching something and a different object is on our way => ignore
-            if (currentInteractable != null && currentInteractable != customInteractable)
+            if (currentlyHovered != null && currentlyHovered != customInteractable)
                 return;
 
-            HandleCustomInteractableInteraction(customInteractable);
+            HandleCustomInteractableHover(customInteractable);
         }
 
-        private void HandleCustomInteractableInteraction(CustomInteractable customInteractable) {
-            bool interactableDidChange = currentInteractable != customInteractable;
-            currentInteractable = customInteractable;
-            currentInteractable.OnRayHover();
+        private void HandleCustomInteractableHover(CustomInteractable customInteractable) {
+            currentlyHovered = customInteractable;
+            customInteractable.OnRayHover();
+        }
 
-            if (interactableDidChange && interactWithUI != null && interactWithUI.GetState(pose.inputSource)) {
-                currentInteractable.OnRayBeginClick(pointer.transform);
+        private void HandlePossibleHoveredCustomInteractableHold() {
+            if (!currentlyHovered)
+                return;
+
+            if (currentlyHovered == currentlyHolding)
+                return;
+
+            if (interactWithUI.GetState(pose.inputSource)) {
+                currentlyHolding = currentlyHovered;
+                currentlyHolding.OnRayBeginClick(pointer.transform);
             }
-
-            HandleMoveCustomInteractableForwardsOrBackwardsOnUserInput();
         }
 
-        private void HandleMoveCustomInteractableForwardsOrBackwardsOnUserInput() {
-            if (!rightJoystickPosition.active)
-                throw new AssertionException("Right Joystick Position action is not active, set it up correctly.");
-
+        private void HandleMoveHeldCustomInteractableForwardsOrBackwardsOnUserInput() {
             var newRayDistance = pointer.transform.localScale.z;
-            var rightJoysticksYAxisPosition = rightJoystickPosition.axis.y;
-            if (rightJoysticksYAxisPosition < -0.15f) {
+            if (rightJoystickSouth.GetState(pose.inputSource)) {
                 if (newRayDistance <= 5f)
                     return;
                 newRayDistance -= 0.5f;
-            } else if (rightJoysticksYAxisPosition > 0.15f) {
+            } else if (rightJoystickNorth.GetState(pose.inputSource)) {
                 if (newRayDistance >= 20f)
                     return;
                 newRayDistance += 0.5f;
@@ -163,23 +216,23 @@ namespace Scenes.SampleScene {
             pointer.transform.localPosition = new Vector3(0f, 0f, newRayDistance / 2f);
         }
 
-        private void HandlePossibleEndOfObjectInteraction(bool isHit, RaycastHit raycastHit) {
+        private void HandlePossibleEndOfObjectHover(bool isHit, RaycastHit raycastHit) {
             // we have nothing we think we're interacting with
-            if (currentInteractable == null)
+            if (currentlyHovered == null)
                 return;
 
             // we're touching something, but it's still the same object we know of
             // if the object we're touching is the object itself, it means we're just touching the ray => ignore
-            if (isHit && (raycastHit.transform == currentInteractable.transform ||
+            if (isHit && (raycastHit.transform == currentlyHovered.transform ||
                           raycastHit.transform == pointer.transform))
                 return;
 
-            HandleEndOfCustomInteractableInteraction();
+            HandleEndOfCustomInteractableHover();
         }
 
-        private void HandleEndOfCustomInteractableInteraction() {
-            currentInteractable.OnRayEndHover();
-            currentInteractable = null;
+        private void HandleEndOfCustomInteractableHover() {
+            currentlyHovered.OnRayEndHover();
+            currentlyHovered = null;
         }
     }
 }

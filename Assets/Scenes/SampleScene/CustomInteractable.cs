@@ -1,10 +1,9 @@
-﻿using System;
-using UnityEngine;
-using UnityEngine.Assertions;
+﻿using UnityEngine;
 
 namespace Scenes.SampleScene {
     [DisallowMultipleComponent]
     public class CustomInteractable : MonoBehaviour {
+        public GameObject originalPrefab { get; set; }
         private FixedJoint rayJoint;
         private Color originalColor;
         private bool isHighlighted;

@@ -105,11 +105,59 @@ namespace Valve.VR
             }
         }
         
-        public virtual SteamVR_Action_Vector2 RightJoystickPosition
+        public virtual SteamVR_Action_Boolean InvokeMenu
         {
             get
             {
-                return SteamVR_Actions.default_RightJoystickPosition;
+                return SteamVR_Actions.default_InvokeMenu;
+            }
+        }
+        
+        public virtual SteamVR_Action_Boolean RightJoystickNorth
+        {
+            get
+            {
+                return SteamVR_Actions.default_RightJoystickNorth;
+            }
+        }
+        
+        public virtual SteamVR_Action_Boolean RightJoystickSouth
+        {
+            get
+            {
+                return SteamVR_Actions.default_RightJoystickSouth;
+            }
+        }
+        
+        public virtual SteamVR_Action_Boolean RightJoystickEast
+        {
+            get
+            {
+                return SteamVR_Actions.default_RightJoystickEast;
+            }
+        }
+        
+        public virtual SteamVR_Action_Boolean RightJoystickWest
+        {
+            get
+            {
+                return SteamVR_Actions.default_RightJoystickWest;
+            }
+        }
+        
+        public virtual SteamVR_Action_Boolean RightAButton
+        {
+            get
+            {
+                return SteamVR_Actions.default_RightAButton;
+            }
+        }
+        
+        public virtual SteamVR_Action_Boolean RightBButton
+        {
+            get
+            {
+                return SteamVR_Actions.default_RightBButton;
             }
         }
         

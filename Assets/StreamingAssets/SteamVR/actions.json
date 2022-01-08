@@ -50,8 +50,32 @@
       "type": "boolean"
     },
     {
-      "name": "/actions/default/in/RightJoystickPosition",
-      "type": "vector2"
+      "name": "/actions/default/in/InvokeMenu",
+      "type": "boolean"
+    },
+    {
+      "name": "/actions/default/in/RightJoystickNorth",
+      "type": "boolean"
+    },
+    {
+      "name": "/actions/default/in/RightJoystickSouth",
+      "type": "boolean"
+    },
+    {
+      "name": "/actions/default/in/RightJoystickEast",
+      "type": "boolean"
+    },
+    {
+      "name": "/actions/default/in/RightJoystickWest",
+      "type": "boolean"
+    },
+    {
+      "name": "/actions/default/in/RightAButton",
+      "type": "boolean"
+    },
+    {
+      "name": "/actions/default/in/RightBButton",
+      "type": "boolean"
     },
     {
       "name": "/actions/default/out/Haptic",
