@@ -1,10 +1,11 @@
-﻿using UnityEditor;
+﻿using System;
 using UnityEngine;
+using UnityEngine.Assertions;
 
 namespace Scenes.SampleScene {
     [DisallowMultipleComponent]
     public class CustomInteractable : MonoBehaviour {
-        private FixedJoint rayFixedJoint;
+        private FixedJoint rayJoint;
         private Color originalColor;
         private bool isHighlighted;
 
@@ -16,20 +17,21 @@ namespace Scenes.SampleScene {
             EndHighlight();
         }
 
-        public void OnRayClick(Transform ray) {
-            if (rayFixedJoint != null)
+        public void OnRayBeginClick(Transform ray) {
+            if (rayJoint != null)
                 return;
 
-            rayFixedJoint = gameObject.AddComponent<FixedJoint>();
-            rayFixedJoint.connectedBody = ray.gameObject.GetComponent<Rigidbody>();
-            // gameObject.GetComponent(FixedJoint).connectedBody=collision.rigidbody;
+            rayJoint = gameObject.AddComponent<FixedJoint>();
+            rayJoint.connectedBody = ray.gameObject.GetComponent<Rigidbody>();
         }
 
         public void OnRayEndClick() {
-            if (rayFixedJoint == null)
+            if (rayJoint == null)
                 return;
 
-            Destroy(rayFixedJoint);
+            Destroy(rayJoint);
+            // Adding fixed joint seems to add rigid body to the object
+            Destroy(gameObject.GetComponent<Rigidbody>());
         }
 
         private void Highlight() {

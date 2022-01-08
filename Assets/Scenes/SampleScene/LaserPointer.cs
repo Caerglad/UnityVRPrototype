@@ -1,18 +1,22 @@
-﻿using UnityEngine;
+﻿using NUnit.Framework;
+using UnityEngine;
 using Valve.VR;
+using Valve.VR.InteractionSystem;
 
 namespace Scenes.SampleScene {
     [DisallowMultipleComponent]
     public class LaserPointer : MonoBehaviour {
         public Color color;
-        public bool addRigidBody;
 
         public SteamVR_Behaviour_Pose pose;
         public SteamVR_Action_Boolean interactWithUI = SteamVR_Input.GetBooleanAction("InteractUI");
+        public SteamVR_Action_Vector2 rightJoystickPosition = SteamVR_Input.GetVector2Action("RightJoystickPosition");
 
+        private Ray ray;
         private bool isActive;
         private GameObject holder;
         private GameObject pointer;
+        private MeshRenderer pointerMeshRenderer;
         private readonly Color clickColor = Color.green;
         private CustomInteractable currentInteractable;
 
@@ -35,26 +39,31 @@ namespace Scenes.SampleScene {
                 }
             };
 
+            CreatePointer();
+        }
+
+        private void CreatePointer() {
+            Teleport.instance.CancelTeleportHint();
             pointer = GameObject.CreatePrimitive(PrimitiveType.Cube);
             pointer.transform.parent = holder.transform;
-            pointer.transform.localScale = new Vector3(Thickness, Thickness, 100f);
+            pointer.transform.localScale = new Vector3(Thickness, Thickness, Dist);
             pointer.transform.localPosition = new Vector3(0f, 0f, 50f);
             pointer.transform.localRotation = Quaternion.identity;
-            BoxCollider collider = pointer.GetComponent<BoxCollider>();
-            if (addRigidBody) {
-                if (collider) {
-                    collider.isTrigger = true;
-                }
+            pointerMeshRenderer = pointer.GetComponent<MeshRenderer>();
 
-                Rigidbody rigidBody = pointer.AddComponent<Rigidbody>();
-                rigidBody.isKinematic = true;
-            } else if (collider) {
-                Destroy(collider);
+            var pointerCollider = pointer.GetComponent<BoxCollider>();
+            if (pointerCollider) {
+                pointerCollider.isTrigger = true;
             }
 
-            Material newMaterial = new Material(Shader.Find("Unlit/Color"));
-            newMaterial.SetColor("_Color", color);
-            pointer.GetComponent<MeshRenderer>().material = newMaterial;
+            var pointerRigidBody = pointer.AddComponent<Rigidbody>();
+            pointerRigidBody.isKinematic = true;
+
+            var newPointerMaterial = new Material(Shader.Find("Unlit/Color"));
+            newPointerMaterial.SetColor("_Color", color);
+            pointer.GetComponent<MeshRenderer>().material = newPointerMaterial;
+
+            ray = new Ray(transform.position, transform.forward);
         }
 
         private void Update() {
@@ -63,26 +72,45 @@ namespace Scenes.SampleScene {
                 transform.GetChild(0).gameObject.SetActive(true);
             }
 
-            var raycast = new Ray(transform.position, transform.forward);
-            var bHit = Physics.Raycast(raycast, out var hit);
+            UpdateRayPositionAndOrigin();
 
-            if (interactWithUI != null && interactWithUI.GetState(pose.inputSource)) {
-                pointer.transform.localScale = new Vector3(Thickness * 5f, Thickness * 5f, Dist);
-                pointer.GetComponent<MeshRenderer>().material.color = clickColor;
-            } else {
-                pointer.transform.localScale = new Vector3(Thickness, Thickness, Dist);
-                pointer.GetComponent<MeshRenderer>().material.color = color;
+            var didRayHit = Physics.Raycast(ray, out var rayHit);
+            HandlePossibleEndOfObjectInteraction(didRayHit, rayHit);
+            UpdatePointerPositionAndScale(didRayHit, rayHit);
+            HandlePossibleEndOfRayClick();
+            HandlePossibleObjectInteraction(didRayHit, rayHit);
+        }
+
+        private void UpdateRayPositionAndOrigin() {
+            ray.origin = transform.position;
+            ray.direction = transform.forward;
+        }
+
+        private void UpdatePointerPositionAndScale(bool didRayHit, RaycastHit raycastHit) {
+            if (currentInteractable != null)
+                return;
+
+            var rayDistance = Dist;
+            if (didRayHit && raycastHit.distance < Dist &&
+                raycastHit.transform != pointer.transform) {
+                rayDistance = raycastHit.distance;
             }
 
-            pointer.transform.localPosition = new Vector3(0f, 0f, Dist / 2f);
-            
-            HandlePossibleEndOfObjectInteraction(bHit, hit);
-            
+            if (interactWithUI != null && interactWithUI.GetState(pose.inputSource)) {
+                pointer.transform.localScale = new Vector3(Thickness * 5f, Thickness * 5f, rayDistance);
+                pointerMeshRenderer.material.color = clickColor;
+            } else {
+                pointer.transform.localScale = new Vector3(Thickness * 1.5f, Thickness * 1.5f, rayDistance);
+                pointerMeshRenderer.material.color = color;
+            }
+
+            pointer.transform.localPosition = new Vector3(0f, 0f, rayDistance / 2f);
+        }
+
+        private void HandlePossibleEndOfRayClick() {
             if (currentInteractable != null && interactWithUI != null && !interactWithUI.GetState(pose.inputSource)) {
                 currentInteractable.OnRayEndClick();
             }
-
-            HandlePossibleObjectInteraction(bHit, hit);
         }
 
         private void HandlePossibleObjectInteraction(bool isHit, RaycastHit raycastHit) {
@@ -93,16 +121,46 @@ namespace Scenes.SampleScene {
             if (customInteractable == null)
                 return;
 
+            // we're already touching something and a different object is on our way => ignore
+            if (currentInteractable != null && currentInteractable != customInteractable)
+                return;
+
             HandleCustomInteractableInteraction(customInteractable);
         }
 
         private void HandleCustomInteractableInteraction(CustomInteractable customInteractable) {
+            bool interactableDidChange = currentInteractable != customInteractable;
             currentInteractable = customInteractable;
             currentInteractable.OnRayHover();
 
-            if (interactWithUI != null && interactWithUI.GetState(pose.inputSource)) {
-                currentInteractable.OnRayClick(pointer.transform);
+            if (interactableDidChange && interactWithUI != null && interactWithUI.GetState(pose.inputSource)) {
+                currentInteractable.OnRayBeginClick(pointer.transform);
             }
+
+            HandleMoveCustomInteractableForwardsOrBackwardsOnUserInput();
+        }
+
+        private void HandleMoveCustomInteractableForwardsOrBackwardsOnUserInput() {
+            if (!rightJoystickPosition.active)
+                throw new AssertionException("Right Joystick Position action is not active, set it up correctly.");
+
+            var newRayDistance = pointer.transform.localScale.z;
+            var rightJoysticksYAxisPosition = rightJoystickPosition.axis.y;
+            if (rightJoysticksYAxisPosition < -0.15f) {
+                if (newRayDistance <= 5f)
+                    return;
+                newRayDistance -= 0.5f;
+            } else if (rightJoysticksYAxisPosition > 0.15f) {
+                if (newRayDistance >= 20f)
+                    return;
+                newRayDistance += 0.5f;
+            } else {
+                return;
+            }
+
+            pointer.transform.localScale = new Vector3(Thickness * 5f, Thickness * 5f, newRayDistance);
+            pointerMeshRenderer.material.color = clickColor;
+            pointer.transform.localPosition = new Vector3(0f, 0f, newRayDistance / 2f);
         }
 
         private void HandlePossibleEndOfObjectInteraction(bool isHit, RaycastHit raycastHit) {
@@ -112,7 +170,8 @@ namespace Scenes.SampleScene {
 
             // we're touching something, but it's still the same object we know of
             // if the object we're touching is the object itself, it means we're just touching the ray => ignore
-            if (isHit && raycastHit.transform == currentInteractable.transform || raycastHit.transform == pointer.transform)
+            if (isHit && (raycastHit.transform == currentInteractable.transform ||
+                          raycastHit.transform == pointer.transform))
                 return;
 
             HandleEndOfCustomInteractableInteraction();
